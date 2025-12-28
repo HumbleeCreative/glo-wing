@@ -6,7 +6,8 @@ let ctx;
 
 let firstGame = true; // Flag to track if this is the first game in the session
 let gameRunning = false; // Flag to track the game state
-let lastSpawnTime = 0;
+let paused = false; // Flag to track paused game state
+let spawnTimer = 0;
 let score = 0;
 let highScore = 0;
 let lastUpdateTime = 0;
@@ -17,6 +18,20 @@ const config = {
   obstacleSpeed: 3,
   obstacleGap: 150,
   obstacleSpawnRate: 2000,
+};
+
+// Maps the keys to an action
+const controls = {
+  Space: "Jump",
+  ArrowUp: "Jump",
+  KeyP: "Pause",
+  Escape: "Pause",
+};
+
+// Defines the actions and states
+let controlsAction = {
+  Jump: { pressed: false, locked: false },
+  Pause: { pressed: false, locked: false },
 };
 
 let player = {
@@ -42,8 +57,11 @@ function init() {
   // Listen for window resizes (desktop) or orientation changes (mobile)
   window.addEventListener("resize", resizeCanvas);
 
-  window.addEventListener("keydown", handleInput);
-  canvas.addEventListener("mousedown", handleInput);
+  // Refactored to use an Input Manager Function
+  window.addEventListener("keydown", inputManager);
+  window.addEventListener("keyup", inputManager);
+  canvas.addEventListener("mousedown", inputManager);
+  canvas.addEventListener("touchstart", inputManager, { passive: false });
 
   loadAssets();
   requestAnimationFrame((timestamp) => {
@@ -66,7 +84,7 @@ function gameLoop(timestamp) {
   // This normalises dt for 60 frames per second
   let dt = deltaTime / 16.6;
 
-  update(dt);
+  update(dt, deltaTime);
   draw();
   requestAnimationFrame(gameLoop);
 }
@@ -78,6 +96,8 @@ function gameReset() {
   resetObstacles();
   resetScore();
   gameRunning = true;
+  paused = false;
+  spawnTimer = 0;
 }
 
 function gameOver() {
@@ -90,10 +110,10 @@ function resizeCanvas() {
   canvas.width = canvas.clientWidth;
   canvas.height = canvas.clientHeight;
 }
-function update(dt) {
-  if (gameRunning) {
+function update(dt, deltaTime) {
+  if (gameRunning && !paused) {
     movePlayer(dt);
-    spawnObstacles();
+    spawnObstacles(deltaTime); // Makes sure the timer only counts up when the game is not paused.
     moveObstacles(dt);
     cleanupObstacles();
     checkCollision();
@@ -184,14 +204,14 @@ function createObstacles() {
   // Adds the obstacle to the array
   obstacles.push(obstacle);
 }
-function spawnObstacles() {
-  // Handles the spawning of obstacles with a timer
+function spawnObstacles(deltaTime) {
+  // spawnTimer will essentially work like a stopwatch and count upwards
+  spawnTimer += deltaTime;
 
-  let currentTime = Date.now();
-  // If the current time minus the lastSpawnTime is larger than the spawn rate we create an obstacle and reset the last spawn time
-  if (currentTime - lastSpawnTime > config.obstacleSpawnRate) {
+  // If the spawnTimer reaches our spawn rate variable then we trigger createObstacles
+  if (spawnTimer >= config.obstacleSpawnRate) {
     createObstacles();
-    lastSpawnTime = currentTime;
+    spawnTimer = 0; // Resets the spawnTimer back to 0
   }
 }
 function drawObstacles() {
@@ -296,15 +316,53 @@ function drawScore() {
 function createWorld() {}
 function drawWorld() {}
 
-// === Input Logic ===
-function handleInput(e) {
-  if (e.code === "Space" || e.type === "mousedown") {
-    // If the game is not running, reset the game.
-    // If the game is running, make the player jump
+// === Input Manager ===
+function inputManager(e) {
+  // Prevents a mobile touch triggering as a mouse click
+  if (e.type === "touchstart") e.preventDefault();
+
+  // Gets the action from our dictionary (e.g., "Jump" or "Pause")
+  const actionName = controls[e.code];
+
+  // Handle Keyboard events
+  if (e.type === "keydown" && actionName) {
+    const action = controlsAction[actionName];
+
+    // Only trigger if not held down (locked)
+    if (!e.repeat && !action.locked) {
+      action.locked = true;
+      inputHandler(actionName);
+    }
+  }
+
+  // When a keyup event happens we unlock the action
+  if (e.type === "keyup" && actionName) {
+    controlsAction[actionName].locked = false;
+  }
+
+  // Handle Mouse and Touch events (Defaults to "Jump")
+  if (e.type === "mousedown" || e.type === "touchstart") {
+    inputHandler("Jump");
+  }
+}
+
+// === Input Handler ===
+function inputHandler(action) {
+  if (action === "Jump") {
     if (!gameRunning) {
       gameReset();
-    } else {
+    } else if (!paused) {
       playerJump();
+    }
+  }
+
+  if (action === "Pause") {
+    // console.log("Game Paused!");
+    if (gameRunning) {
+      paused = !paused;
+      // if (!paused) {
+      //   lastSpawnTime = Date.now();
+      // }
     }
   }
 }
