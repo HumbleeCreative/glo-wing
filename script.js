@@ -6,6 +6,8 @@ let ctx;
 
 let gameRunning = false;
 let lastSpawnTimer = 0;
+let score = 0;
+let highScore = 0;
 
 const config = {
   gravity: 0,
@@ -32,9 +34,11 @@ function init() {
   canvas = document.getElementById("game");
   ctx = canvas.getContext("2d");
 
-  // Set the canvas internal resolution here:
-  canvas.width = 400;
-  canvas.height = 500;
+  // Initial sizing
+  resizeCanvas();
+
+  // Listen for window resizes (desktop) or orientation changes (mobile)
+  window.addEventListener("resize", resizeCanvas);
 
   window.addEventListener("keydown", handleInput);
   canvas.addEventListener("mousedown", handleInput);
@@ -66,6 +70,11 @@ function gameOver() {
 }
 
 // === Utilities ===
+function resizeCanvas() {
+  // Sets the canvas resolution to the actual canvas size as defined in the CSS
+  canvas.width = canvas.clientWidth;
+  canvas.height = canvas.clientHeight;
+}
 function update() {
   if (gameRunning) {
     movePlayer();
@@ -128,7 +137,24 @@ function onCollision() {
 function resetScore() {}
 function updateScore() {}
 function updateHighScore() {}
-function drawScore() {}
+function drawScore() {
+  ctx.save();
+
+  ctx.fillStyle = "white";
+  ctx.font = "bold 24px Verdana";
+  ctx.textAlign = "center";
+
+  // Shadow
+  ctx.shadowColor = "black";
+  ctx.shadowBlur = 2;
+  ctx.shadowOffsetX = 2;
+  ctx.shadowOffsetY = 2;
+
+  // Paints the score at the top center of the canvas
+  ctx.fillText(`${score}`, canvas.width / 2, canvas.height / 10);
+
+  ctx.restore();
+}
 
 // === World Logic ===
 function createWorld() {}
