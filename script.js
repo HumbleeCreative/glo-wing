@@ -360,9 +360,6 @@ function inputHandler(action) {
     // console.log("Game Paused!");
     if (gameRunning) {
       paused = !paused;
-      // if (!paused) {
-      //   lastSpawnTime = Date.now();
-      // }
     }
   }
 }
