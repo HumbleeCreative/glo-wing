@@ -10,18 +10,18 @@ let score = 0;
 let highScore = 0;
 
 const config = {
-  gravity: 0,
-  jumpStrength: 0,
-  obstacleSpeed: 0,
-  obstacleGap: 0,
-  obstacleSpawnRate: 0,
+  gravity: 0.3,
+  jumpStrength: -8,
+  obstacleSpeed: 3,
+  obstacleGap: 150,
+  obstacleSpawnRate: 1500,
 };
 
 let player = {
-  x: 0,
-  y: 0,
-  width: 0,
-  height: 0,
+  x: -50, // Creates player off screen
+  y: -50,
+  width: 64,
+  height: 64,
   velocity: 0,
   sprite: 0,
 };
@@ -96,16 +96,44 @@ function draw() {
 // === Visuals ===
 function loadAssets() {
   // Loads the sprites for anything visual
+
+  player.width = canvas.width * 0.08; // Makes the player object responsive to canvas size
+  player.height = player.width;
 }
 function drawStartScreen() {}
 function drawGameOverScreen() {}
 
 // === Player Logic ===
 function createPlayer() {}
-function resetPlayer() {}
-function drawPlayer() {}
-function movePlayer() {}
-function playerJump() {}
+function resetPlayer() {
+  player.x = canvas.width / 5;
+  player.y = canvas.height / 2;
+  player.velocity = 0;
+}
+function drawPlayer() {
+  ctx.fillStyle = "yellow";
+  ctx.fillRect(player.x, player.y, player.width, player.height);
+}
+function movePlayer() {
+  player.velocity += config.gravity;
+  player.y += player.velocity; // Makes the player fall at the rate of gravity
+
+  // If the player hits the floor trigger collision
+  if (player.y + player.height > canvas.height) {
+    player.y = canvas.height - player.height;
+    onCollision();
+  }
+
+  // If the player hits the top of the screen set the velocity to 0
+  // This prevents the player going off the screen
+  if (player.y < 0 - player.height / 2) {
+    player.y = 0 - player.height / 2;
+    player.velocity = 0;
+  }
+}
+function playerJump() {
+  player.velocity = config.jumpStrength;
+}
 
 // === Obstacle Logic ===
 function createObstacles() {
