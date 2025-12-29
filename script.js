@@ -183,8 +183,9 @@ function drawGameOverScreen() {
 }
 function drawPauseScreen() {
   menuTitle.textContent = "Paused";
-  menuStats.textContent = "Press Space to restart";
-  menuBtn.style.display = "none";
+  menuStats.textContent = "Taking a break?";
+  menuBtn.textContent = "Resume";
+  menuBtn.style.display = "block";
   menuScreen.style.display = "flex";
 }
 
@@ -396,9 +397,10 @@ function inputManager(e) {
   }
 
   // Handle Mouse and Touch events (Defaults to "Jump")
-
-  if (menuScreen.style.display !== "flex") {
-    if (e.type === "mousedown" || e.type === "touchstart") {
+  if (e.type === "mousedown" || e.type === "touchstart") {
+    if (!gameRunning || paused) {
+      inputHandler("Jump");
+    } else if (menuScreen.style.display !== "flex") {
       inputHandler("Jump");
     }
   }
@@ -409,7 +411,10 @@ function inputHandler(action) {
   if (action === "Jump") {
     if (!gameRunning) {
       gameReset();
-    } else if (!paused) {
+    } else if (paused) {
+      paused = false;
+      menuScreen.style.display = "none";
+    } else {
       playerJump();
     }
   }
