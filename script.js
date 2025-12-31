@@ -45,13 +45,13 @@ let controlsAction = {
 
 // Player Sprites
 const dragonSpriteFiles = [
-  "dragonSprite0.png",
-  "dragonSprite1.png",
-  "dragonSprite2.png",
-  "dragonSprite3.png",
-  "dragonSprite4.png",
-  "dragonSprite5.png",
-  "dragonSprite6.png",
+  "sprites/dragon/dragonSprite0.png",
+  "sprites/dragon/dragonSprite1.png",
+  "sprites/dragon/dragonSprite2.png",
+  "sprites/dragon/dragonSprite3.png",
+  "sprites/dragon/dragonSprite4.png",
+  "sprites/dragon/dragonSprite5.png",
+  "sprites/dragon/dragonSprite6.png",
 ];
 let dragonSprites = [];
 let imagesLoaded = 0;
@@ -67,6 +67,11 @@ let player = {
   frameTimer: 0,
   frameInterval: 60, // Lower number = faster wings
 };
+
+// Audio
+const bgMusic = new Audio("assets/audio/bgm/bgm-loop.mp3");
+bgMusic.loop = true;
+bgMusic.volume = 0.2; // Starts at 50% volume
 
 // Array of obstacles
 let obstacles = [];
@@ -524,8 +529,10 @@ function inputHandler(action) {
   if (action === "Jump") {
     if (!gameRunning) {
       gameReset();
+      bgMusic.play();
     } else if (paused) {
       paused = false;
+      bgMusic.play();
       menuScreen.style.display = "none";
     } else {
       jumpRequested = true; // Using the flag instead of just calling the jump function straight way makes sure that we only trigger the jump at the start of the next frame update which should prevent any glitches and stuttering
@@ -539,7 +546,9 @@ function inputHandler(action) {
       paused = !paused;
       if (paused) {
         drawPauseScreen();
+        bgMusic.pause();
       } else {
+        bgMusic.play();
         menuScreen.style.display = "none";
       }
     }
