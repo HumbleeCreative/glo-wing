@@ -5,6 +5,7 @@ const menuScreen = document.getElementById("menu-screen");
 const menuTitle = document.getElementById("menu-title");
 const menuStats = document.getElementById("menu-stats");
 const menuBtn = document.getElementById("menu-btn");
+const uiLayer = document.getElementById("ui-layer");
 const liveScore = document.getElementById("live-score");
 const pauseBtn = document.getElementById("pause-btn");
 
@@ -119,8 +120,10 @@ async function init() {
 
   await loadAssets();
 
-  // Set the initial Start Screen
-  drawStartScreen();
+  setTimeout(() => {
+    // Set the initial Start Screen
+    drawStartScreen();
+  }, 2000);
 
   requestAnimationFrame((timestamp) => {
     lastUpdateTime = timestamp;
@@ -157,6 +160,7 @@ function gameReset() {
   paused = false;
   spawnTimer = 0;
 
+  uiLayer.style.display = "flex";
   menuScreen.style.display = "none";
 }
 
@@ -227,7 +231,15 @@ function draw() {
 }
 
 // === Visuals ===
+function drawLoadingScreen() {
+  menuTitle.innerHTML = "Loading";
+  menuStats.textContent = "Waking up the dragon...";
+  menuBtn.style.display = "none";
+  menuScreen.style.display = "flex";
+}
 async function loadAssets() {
+  drawLoadingScreen();
+
   // Load high score from memory when the game starts
   const savedScore = localStorage.getItem("flappyDragonHighScore");
   if (savedScore) {

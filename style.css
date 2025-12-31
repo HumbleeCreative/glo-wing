@@ -69,7 +69,7 @@ body {
   padding: 20px;
   z-index: 11;
   pointer-events: none;
-  display: flex;
+  display: none;
   flex-direction: column;
   justify-content: space-between;
   align-items: center;
@@ -117,7 +117,7 @@ body {
   inset: 0px;
   background: rgba(13, 4, 21, 0.85);
   backdrop-filter: blur(12px);
-  display: none;
+  display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
