@@ -43,6 +43,17 @@ let controlsAction = {
   Pause: { pressed: false, locked: false },
 };
 
+// Sound FX
+const sfx = {
+  point: new Audio("assets/audio/sfx/point.wav"),
+  death: new Audio("assets/audio/sfx/death.wav"),
+  jump: new Audio("assets/audio/sfx/jump.wav"),
+};
+
+sfx.point.volume = 0.3;
+sfx.jump.volume = 0.2;
+sfx.death.volume = 0.4;
+
 // Player Sprites
 const dragonSpriteFiles = [
   "sprites/dragon/dragonSprite0.png",
@@ -338,6 +349,7 @@ function movePlayer(dt) {
 }
 function playerJump() {
   player.velocity = config.jumpStrength;
+  playSfx(sfx.jump);
 }
 
 // === Obstacle Logic ===
@@ -445,6 +457,7 @@ function checkCollision() {
   });
 }
 function onCollision() {
+  playSfx(sfx.death);
   gameOver();
 }
 
@@ -456,6 +469,9 @@ function resetScore() {
 function updateScore() {
   score++;
   liveScore.textContent = score;
+
+  playSfx(sfx.point);
+
   if (score > highScore) {
     updateHighScore();
   }
@@ -553,4 +569,10 @@ function inputHandler(action) {
       }
     }
   }
+}
+
+function playSfx(sound) {
+  // Restarts the sound effect from the beginning if it is already playing
+  sound.currentTime = 0;
+  sound.play();
 }
