@@ -8,6 +8,7 @@
   --surface: #2d1b4e99;
   --neon-glow: 0 0 15px #f20df299;
   --font-display: "Space Grotesk", sans-serif;
+  --liveScoreShadow: #6500e9; /* Orange */
 }
 
 /** === Resets & Global Styles === */
@@ -83,7 +84,9 @@ body {
   font-size: 3rem;
   font-weight: 800;
   color: white;
-  text-shadow: 0 0 10px var(--secondary), 0 0 20px var(--secondary);
+  text-shadow:
+    0 0 10px var(--liveScoreShadow),
+    0 0 20px var(--liveScoreShadow);
   pointer-events: none;
   z-index: 10;
 }
@@ -135,7 +138,9 @@ body {
   margin-bottom: 1.5rem;
   transform: skewX(-10deg);
   color: white;
-  text-shadow: 0 0 10px var(--primary), 0 0 20px var(--primary);
+  text-shadow:
+    0 0 10px var(--primary),
+    0 0 20px var(--primary);
 }
 
 #menu-stats {
@@ -213,4 +218,27 @@ body {
 
 #menu-title {
   animation: flicker 3s infinite;
+}
+
+@keyframes countdownPop {
+  0% {
+    transform: skewX(-10deg) scale(1);
+    opacity: 0;
+  }
+  25% {
+    transform: skewX(-10deg) scale(1.5);
+    opacity: 1;
+  }
+  75% {
+    transform: skewX(-10deg) scale(1.5);
+    opacity: 1;
+  }
+  100% {
+    transform: skewX(-10deg) scale(0.5);
+    opacity: 0;
+  }
+}
+
+.countdown-active {
+  animation: countdownPop 1s ease-in-out forwards !important;
 }

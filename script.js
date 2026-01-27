@@ -1,6 +1,8 @@
 // script.js
 
-// === DOM ===
+//* === DOM Elements ===
+//#region DOM Elements
+
 const menuScreen = document.getElementById("menu-screen");
 const menuTitle = document.getElementById("menu-title");
 const menuStats = document.getElementById("menu-stats");
@@ -8,19 +10,11 @@ const menuBtn = document.getElementById("menu-btn");
 const uiLayer = document.getElementById("ui-layer");
 const liveScore = document.getElementById("live-score");
 const pauseBtn = document.getElementById("pause-btn");
+const canvas = document.getElementById("game");
+//#endregion
 
-// === Global Variables ===
-let canvas;
-let ctx;
-
-let firstGame = true; // Flag to track if this is the first game in the session
-let gameRunning = false; // Flag to track the game state
-let paused = false; // Flag to track paused game state
-let jumpRequested = false; // Flag to track if we should trigger a jump
-let spawnTimer = 0;
-let score = 0;
-let highScore = 0;
-let lastUpdateTime = 0;
+//* === Configuration ===
+//#region Configuration
 
 const config = {
   gravity: 0.3,
@@ -28,6 +22,10 @@ const config = {
   obstacleSpeed: 3,
   obstacleGap: 150,
   obstacleSpawnRate: 2000,
+  terminalVelocity: 10,
+  playerScale: 0.16, // Player height relative to the canvas width
+  aspectRatio: 166 / 129, // Dragon sprite ratio
+  hitPadding: 0.25, // This is used to shrink the collision hitbox to make the game feel fairer
 };
 
 // Maps the keys to an action
@@ -37,25 +35,39 @@ const controls = {
   KeyP: "Pause",
   Escape: "Pause",
 };
+//#endregion
 
-// Defines the actions and states
-let controlsAction = {
-  Jump: { pressed: false, locked: false },
-  Pause: { pressed: false, locked: false },
-};
+//* === Global Variables ===
+//#region Global Variables
 
-// Sound FX
-const sfx = {
-  point: new Audio("assets/audio/sfx/point.wav"),
-  death: new Audio("assets/audio/sfx/death.wav"),
-  jump: new Audio("assets/audio/sfx/jump.wav"),
-};
+let ctx, audioCtx, masterGain;
 
-sfx.point.volume = 0.3;
-sfx.jump.volume = 0.2;
-sfx.death.volume = 0.4;
+let firstGame = true; // Flag to track if this is the first game in the session
+let gameRunning = false; // Flag to track the game state
+let paused = false; // Flag to track paused game state
+let isCountingDown = false; // Flag to track if we are counting down after a pause
+let jumpRequested = false; // Flag to track if we should trigger a jump
+
+let score = 0;
+let highScore = 0;
+let imagesLoaded = 0;
+let spawnTimer = 0; // Timer for spawning obstacles
+let lastUpdateTime = 0; // Store the last time we updated the frame
+let countdownValue = 3;
+let countdownTimer = null;
+//#endregion
+
+//* === Assets ===
+//#region Assets
+
+// Sound Effects
+const sfxBuffers = { point: null, death: null, jump: null };
+// Background Music
+let bgmBuffer = null;
+let bgmSource = null;
 
 // Player Sprites
+let dragonSprites = [];
 const dragonSpriteFiles = [
   "sprites/dragon/dragonSprite0.png",
   "sprites/dragon/dragonSprite1.png",
@@ -65,8 +77,10 @@ const dragonSpriteFiles = [
   "sprites/dragon/dragonSprite5.png",
   "sprites/dragon/dragonSprite6.png",
 ];
-let dragonSprites = [];
-let imagesLoaded = 0;
+//#endregion
+
+//* === Objects ===
+//#region Objects
 
 let player = {
   x: -50, // Creates player off screen
@@ -80,18 +94,21 @@ let player = {
   frameInterval: 60, // Lower number = faster wings
 };
 
-// Audio
-const bgMusic = new Audio("assets/audio/bgm/bgm-loop.mp3");
-bgMusic.loop = true;
-bgMusic.volume = 0.2; // Starts at 20% volume
-
 // Array of obstacles
 let obstacles = [];
 
-// === Initialisation ===
+// Defines the actions and states
+let controlsAction = {
+  Jump: { pressed: false, locked: false },
+  Pause: { pressed: false, locked: false },
+};
+//#endregion
+
+//* === Initialisation ===
+//#region Initialisation
+
 async function init() {
-  // Change to async to make sure everything is loaded before carrying on
-  canvas = document.getElementById("game");
+  // Uses async to make sure everything is loaded before carrying on
   ctx = canvas.getContext("2d");
 
   // Initial sizing
@@ -100,40 +117,50 @@ async function init() {
   // Listen for window resizes (desktop) or orientation changes (mobile)
   window.addEventListener("resize", resizeCanvas);
 
-  // Refactored to use an Input Manager Function
+  // Uses the Input Manager Function to control the input
   window.addEventListener("keydown", inputManager);
   window.addEventListener("keyup", inputManager);
   canvas.addEventListener("mousedown", inputManager);
   canvas.addEventListener("touchstart", inputManager, { passive: false });
 
-  pauseBtn.addEventListener("click", (e) => {
+  pauseBtn.addEventListener("click", async (e) => {
     e.stopPropagation(); // e.stopPropagation stops the button clicks triggering the canvas click event
     inputHandler("Pause");
   });
 
   if (menuBtn) {
-    menuBtn.addEventListener("click", (e) => {
+    menuBtn.addEventListener("click", async (e) => {
+      e.preventDefault();
       e.stopPropagation(); // e.stopPropagation stops the button clicks triggering the canvas click event
-      inputHandler("Jump");
+
+      if (!audioCtx) await initAudio();
+
+      if (!gameRunning) {
+        gameReset();
+      } else if (paused && !isCountingDown) {
+        startResumeCountdown();
+      }
     });
   }
 
   await loadAssets();
 
+  // Set the initial Start Screen
   setTimeout(() => {
-    // Set the initial Start Screen
     drawStartScreen();
   }, 2000);
 
+  // Starts the animation
   requestAnimationFrame((timestamp) => {
     lastUpdateTime = timestamp;
     gameLoop(timestamp);
   });
 }
+//#endregion
 
-window.onload = init; // Runs the initialisation on page load
+//* === Core Game Loop ===
+//#region Core Game Loop
 
-// === Game Loop ===
 function gameLoop(timestamp) {
   // Calculate time since last frame update in milliseconds
   let deltaTime = timestamp - lastUpdateTime;
@@ -143,63 +170,21 @@ function gameLoop(timestamp) {
   if (deltaTime > 100) deltaTime = 16.6;
 
   // This normalises dt for 60 frames per second
-  let dt = deltaTime / 16.6;
+  const dt = deltaTime / 16.6;
 
   update(dt, deltaTime);
   draw();
   requestAnimationFrame(gameLoop);
 }
 
-// === Game States ===
-function gameReset() {
-  firstGame = false;
-  resetPlayer();
-  resetObstacles();
-  resetScore();
-  gameRunning = true;
-  paused = false;
-  spawnTimer = 0;
-
-  uiLayer.style.display = "flex";
-  menuScreen.style.display = "none";
-}
-
-function gameOver() {
-  gameRunning = false;
-  drawGameOverScreen();
-}
-
-// === Utilities ===
-const loadImage = (src) => {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.src = `assets/${src}`;
-    img.onload = () => resolve(img);
-    img.onerror = (err) => reject(err);
-  });
-};
-
-function resizeCanvas() {
-  // Sets the canvas resolution to the actual canvas size as defined in the CSS
-  canvas.width = canvas.clientWidth;
-  canvas.height = canvas.clientHeight;
-
-  // Updates player size on resize event
-  if (player) {
-    player.height = canvas.width * 0.16;
-    // Maintain the aspect ratio
-    player.width = player.height * (166 / 129);
-  }
-}
 function update(dt, deltaTime) {
   if (gameRunning && !paused) {
-    // Check the buffer before moving anything
     if (jumpRequested) {
       playerJump();
       jumpRequested = false; // Reset the flag
     }
 
-    // === Animation Logic ===
+    // Animation Logic
     player.frameTimer += deltaTime; // Tracks the time since the last frame
     if (player.frameTimer > player.frameInterval) {
       // Moves to the next item in the animation sequence array
@@ -219,24 +204,391 @@ function update(dt, deltaTime) {
     checkCollision();
   }
 }
+
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height); // Clears the canvas
 
   drawWorld(); // Draws first
   drawObstacles(); // Draws on top of the World
   drawPlayer(); // Draws on top of the Obstacles
+}
+//#endregion
 
-  // Moved over to using a live-score element instead of the canvas
-  // drawScore(); // Draws on top of the everything
+//* === Input Management ===
+//#region Input Management
+
+async function inputManager(e) {
+  // Wait until it has been initialised
+  if (!audioCtx) await initAudio();
+
+  // This ensures audio wakes up if the browser throttled it
+  if (audioCtx.state === "suspended" && !paused) await audioCtx.resume();
+
+  // Prevents a mobile touch triggering as a mouse click
+  if (e.type === "touchstart") e.preventDefault();
+
+  // Gets the action from our dictionary (e.g., "Jump" or "Pause")
+  const actionName = controls[e.code];
+
+  if (actionName && controlsAction[actionName]) {
+    // Handle Keyboard events
+    if (e.type === "keydown" && actionName) {
+      const action = controlsAction[actionName];
+
+      // Only trigger if not held down (locked)
+      if (!e.repeat && !action.locked) {
+        action.locked = true;
+        inputHandler(actionName);
+      }
+    }
+
+    // When a keyup event happens we unlock the action
+    if (e.type === "keyup" && actionName) {
+      controlsAction[actionName].locked = false;
+    }
+  }
+
+  // Handle Mouse and Touch events (Defaults to "Jump")
+  if (e.type === "mousedown" || e.type === "touchstart") {
+    if (!gameRunning || paused) {
+      inputHandler("Jump");
+    } else if (menuScreen.style.display !== "flex") {
+      inputHandler("Jump");
+    }
+  }
 }
 
-// === Visuals ===
-function drawLoadingScreen() {
-  menuTitle.innerHTML = "Loading";
-  menuStats.textContent = "Waking up the dragon...";
-  menuBtn.style.display = "none";
-  menuScreen.style.display = "flex";
+//* === Input Handler ===
+
+async function inputHandler(action) {
+  if (action === "Jump") {
+    if (!gameRunning) {
+      if (audioCtx.state === "suspended") await audioCtx.resume();
+      gameReset();
+    } else if (paused && !isCountingDown) {
+      startResumeCountdown();
+    } else {
+      // Using the flag instead of just calling the jump function straight way makes sure that we only trigger the jump at the start of the next frame update which should prevent any glitches and stuttering
+      jumpRequested = true;
+    }
+  }
+
+  if (action === "Pause" && gameRunning && !isCountingDown) {
+    paused = !paused;
+    if (paused) {
+      drawPauseScreen();
+      audioCtx.suspend();
+    } else {
+      startResumeCountdown();
+    }
+  }
 }
+//#endregion
+
+//* === Player Logic ===
+//#region Player Logic
+
+function resetPlayer() {
+  // Resets the player to be 20% of the canvas width from the left of the canvas and centred vertically
+  player.x = canvas.width / 5;
+  player.y = canvas.height / 2;
+  player.velocity = 0;
+}
+
+function movePlayer(dt) {
+  // We multiply everything by dt to make sure the fall speed is consistent on any device
+  player.velocity += config.gravity * dt;
+
+  // Caps falling speed to 10 to prevent glitches
+  if (player.velocity > config.terminalVelocity) {
+    player.velocity = config.terminalVelocity;
+  }
+
+  player.y += player.velocity * dt; // Makes the player fall at the rate of gravity
+
+  // If the player hits the floor trigger collision
+  if (player.y + player.height > canvas.height) {
+    player.y = canvas.height - player.height;
+    // Triggers a collision
+    onCollision();
+  }
+
+  // If the player hits the top of the screen set the velocity to 0
+  // This prevents the player going off the screen
+  if (player.y < 0 - player.height / 2) {
+    player.y = 0 - player.height / 2;
+    player.velocity = 0;
+  }
+}
+
+function playerJump() {
+  player.velocity = config.jumpStrength;
+  playSfx(sfxBuffers.jump, 0.2);
+}
+
+function drawPlayer() {
+  // Safety check: if images aren't loaded yet, draw the fallback square
+  if (imagesLoaded < dragonSpriteFiles.length) {
+    player.width = canvas.width * 0.08;
+    player.height = player.width;
+    ctx.fillStyle = "yellow";
+    ctx.fillRect(player.x, player.y, player.width, player.height);
+    return;
+  }
+
+  ctx.save();
+  ctx.translate(player.x + player.width / 2, player.y + player.height / 2);
+  // Rotate based on velocity (tilt up when jumping, down when falling)
+  let tilt = Math.max(-0.5, Math.min(player.velocity * 0.05, 0.5)); // Clamp the tilt so the player doesn't do a backflip
+  ctx.rotate(tilt);
+
+  const currentImg = dragonSprites[player.animationSequence[player.frameIndex]];
+  ctx.drawImage(
+    currentImg,
+    -player.width / 2,
+    -player.height / 2,
+    player.width,
+    player.height,
+  );
+
+  ctx.restore();
+}
+//#endregion
+
+//* === Obstacle Logic ===
+//#region Obstacle Logic
+
+// Creates the obstacle and pushes it on to the array 'obstacles'
+function createObstacles() {
+  const minHeight = 50;
+  const maxHeight = canvas.height - config.obstacleGap - 50;
+
+  // Sets the size of the top part of the obstacle
+  const topObstacleHeight =
+    Math.floor(Math.random() * (maxHeight - minHeight + 1)) + minHeight;
+
+  // Creates the obstacle object
+  let obstacle = {
+    x: canvas.width, // Starts at the right edge of canvas
+    width: 50, // Fixed width for obstacle
+    topHeight: topObstacleHeight, // Where the top part of the obstacle ends
+    bottomY: topObstacleHeight + config.obstacleGap, // Where the bottom part of the obstacle starts
+    passed: false, // Flag to track score
+  };
+
+  // Adds the obstacle to the array
+  obstacles.push(obstacle);
+}
+
+function spawnObstacles(deltaTime) {
+  // spawnTimer will essentially work like a stopwatch and count upwards
+  spawnTimer += deltaTime;
+
+  // If the spawnTimer reaches our spawn rate variable then we trigger createObstacles
+  if (spawnTimer >= config.obstacleSpawnRate) {
+    createObstacles();
+    spawnTimer = 0; // Resets the spawnTimer back to 0
+  }
+}
+
+function moveObstacles(dt) {
+  // Loops through the array of 'obstacles' and updates the x positions
+  // We multiply everything by dt to make sure the speed is consistent on any device
+  obstacles.forEach((obs) => {
+    obs.x -= config.obstacleSpeed * dt;
+  });
+}
+
+// This filters out obstacles that have gone off the screen so we do not keep calculating them to follow good memory management
+function cleanupObstacles() {
+  // Removes obstacles when they have gone off the screen
+  obstacles = obstacles.filter((obs) => obs.x + obs.width > 0);
+}
+
+function drawObstacles() {
+  ctx.save();
+  // Cyan glow for obstacles
+  ctx.strokeStyle = "#00f0ff";
+  ctx.lineWidth = 3;
+  ctx.shadowBlur = 15;
+  ctx.shadowColor = "#00f0ff";
+  ctx.fillStyle = "#00eeffc4"; // Semi-transparent fill
+
+  // Loop through the array of 'obstacles' and draws them
+  obstacles.forEach((obs) => {
+    const floorX = Math.floor(obs.x);
+    // Draw the top part of the obstacle
+    ctx.strokeRect(floorX, 0, obs.width, obs.topHeight); // Introduced Math.floor to smooth out the edges
+    ctx.fillRect(floorX, 0, obs.width, obs.topHeight);
+
+    // Draw the bottom part of the obstacle
+    ctx.strokeRect(floorX, obs.bottomY, obs.width, canvas.height - obs.bottomY);
+    ctx.fillRect(floorX, obs.bottomY, obs.width, canvas.height - obs.bottomY);
+  });
+  ctx.restore();
+}
+//#endregion
+
+//* === Collision & Scoring ===
+//#region Collision & Scoring
+function checkCollision() {
+  // Changed the bounding box of the player to be slightly smaller than the sprite to make it feel slightly fairer if the sprite barely clips the obstacles
+  const hitPaddingX = player.width * config.hitPadding;
+  const hitPaddingY = player.height * config.hitPadding;
+
+  // Define the player's bounding box
+  const pLeft = player.x + hitPaddingX;
+  const pRight = player.x + player.width - hitPaddingX;
+  const pTop = player.y + hitPaddingY;
+  const pBottom = player.y + player.height - hitPaddingY;
+
+  obstacles.forEach((obs) => {
+    // Define the Obstacle's left and right sides
+    const oLeft = obs.x;
+    const oRight = obs.x + obs.width;
+
+    // If the player has passed through the gap change the passed flag to true and update score
+    if (oRight < pLeft) {
+      if (!obs.passed) {
+        updateScore();
+        obs.passed = true;
+      }
+      return;
+    }
+
+    // Check if the player is within the obstacle bounding box
+    if (pRight > oLeft && pLeft < oRight) {
+      // If the player touches the top or bottom parts of the obstacle trigger collision
+      if (pTop < obs.topHeight || pBottom > obs.bottomY) {
+        onCollision();
+      }
+    }
+  });
+}
+
+function onCollision() {
+  playSfx(sfxBuffers.death, 0.2);
+  gameOver();
+}
+//#endregion
+
+//* === Score Logic ===
+//#region Score Logic
+
+function updateScore() {
+  score++;
+  liveScore.textContent = score;
+
+  playSfx(sfxBuffers.point, 0.2);
+
+  if (score > highScore) {
+    highScore = score;
+    // Save to browser memory
+    localStorage.setItem("flappyDragonHighScore", highScore);
+  }
+}
+//#endregion
+
+//* === Audio System ===
+//#region Audio System
+
+//* Initialises the Web Audio API.
+//! Browsers require this to be triggered by a user gesture (click/tap).
+async function initAudio() {
+  // If the audio context already exists, we don't need to create it again
+  if (audioCtx) return;
+
+  // Create the main audio context (supports older webkit browsers)
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  // Create a Master Gain node to act as a global volume slider
+  masterGain = audioCtx.createGain();
+  masterGain.connect(audioCtx.destination);
+  masterGain.gain.value = 0.5;
+
+  // Load all sound files into memory so they play instantly when needed
+  sfxBuffers.point = await loadAudioBuffer("./assets/audio/sfx/point.wav");
+  sfxBuffers.death = await loadAudioBuffer("./assets/audio/sfx/death.wav");
+  sfxBuffers.jump = await loadAudioBuffer("./assets/audio/sfx/jump.wav");
+  bgmBuffer = await loadAudioBuffer("./assets/audio/bgm/bgm-loop.mp3");
+
+  // Start the background music loop once it's loaded
+  playBGM();
+}
+
+//* Fetches an audio file and decodes it into a buffer to allow for instant playback, which overcomes the HTML Audio limitations
+async function loadAudioBuffer(path) {
+  try {
+    const response = await fetch(path);
+    const arrayBuffer = await response.arrayBuffer(); // Converts the file to raw binary data
+    return await audioCtx.decodeAudioData(arrayBuffer); // Turn that data into an audio buffer
+  } catch (err) {
+    console.error(`[ERROR] Failed to load audio:`, path, err);
+    return null;
+  }
+}
+
+//* Plays a short Sound Effect (SFX).
+// This creates a new source every time, allowing sounds to overlap. Like if the player jumps repeatedly
+function playSfx(buffer, volume = 1.0) {
+  // Safety check: Don't try to play if audio isn't ready or file is missing
+  if (!buffer || !audioCtx) return;
+
+  const source = audioCtx.createBufferSource(); // Creates the virtual record player
+  const gainNode = audioCtx.createGain(); // Creates a volume control for this specific sound
+
+  source.buffer = buffer; // Assigns the sound data
+  gainNode.gain.value = volume; // Set the specific volume level
+
+  // Source -> Volume Control -> Master Volume -> Plays the sounds
+  source.connect(gainNode);
+  gainNode.connect(masterGain);
+
+  source.start(0); // Plays the sound immediately
+}
+
+//* Handles the Background Music loop
+function playBGM() {
+  if (!bgmBuffer || !audioCtx) return;
+
+  stopBGM(); // Prevents multiple tracks from playing at once
+
+  bgmSource = audioCtx.createBufferSource();
+  bgmSource.buffer = bgmBuffer;
+  bgmSource.loop = true; // Makes the music loop indefinitely
+
+  const bgmGain = audioCtx.createGain();
+  bgmGain.gain.value = 0.15; // Set the music quieter than the SFX
+
+  bgmSource.connect(bgmGain);
+  bgmGain.connect(masterGain);
+  bgmSource.start(0);
+}
+
+//* Stops the background music and clears the source.
+function stopBGM() {
+  if (bgmSource) {
+    bgmSource.stop(); // Stops the background music
+    bgmSource = null; // Clears the background music source
+  }
+}
+//#endregion
+
+//* === UI & Visuals ===
+//#region UI & Visuals
+function resizeCanvas() {
+  // Sets the canvas resolution to the actual canvas size as defined in the CSS
+  canvas.width = canvas.clientWidth;
+  canvas.height = canvas.clientHeight;
+
+  // Updates player size on resize event
+  if (player) {
+    player.height = canvas.width * config.playerScale;
+    // Maintain the aspect ratio of the sprite
+    player.width = player.height * config.aspectRatio;
+  }
+}
+
 async function loadAssets() {
   drawLoadingScreen();
 
@@ -267,19 +619,45 @@ async function loadAssets() {
     }
   }
 
-  // // Loads the sprites for the player
-  // spriteFiles.forEach((file, index) => {
-  //   const img = new Image();
-  //   img.src = `assets/${file}`; // Relative path to sprite files
-  //   img.onload = () => {
-  //     imagesLoaded++;
-  //   };
-  //   dragonSprites[index] = img;
-  // });
-
-  player.height = canvas.width * 0.16; // Makes the player object responsive to canvas size
-  player.width = player.height * (166 / 129); // Multiply the player height by the aspect ratio
+  resizeCanvas();
 }
+
+const loadImage = (src) => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.src = `assets/${src}`;
+    img.onload = () => resolve(img);
+    img.onerror = (err) => reject(err);
+  });
+};
+
+function gameReset() {
+  resetPlayer();
+  obstacles = []; // Resets the obstacles array
+  score = 0; // Resets the score
+  liveScore.textContent = score; // Resets the live score
+  gameRunning = true;
+  paused = false;
+  spawnTimer = 0;
+
+  if (audioCtx) audioCtx.resume();
+
+  uiLayer.style.display = "flex";
+  menuScreen.style.display = "none";
+}
+
+function gameOver() {
+  gameRunning = false;
+  drawGameOverScreen();
+}
+
+function drawLoadingScreen() {
+  menuTitle.innerHTML = "Loading";
+  menuStats.textContent = "Waking up the dragon...";
+  menuBtn.style.display = "none";
+  menuScreen.style.display = "flex";
+}
+
 function drawStartScreen() {
   menuTitle.innerHTML = "FLAPPY<br>DRAGON";
   menuStats.textContent = "HumbleeCreative";
@@ -302,289 +680,52 @@ function drawPauseScreen() {
   menuScreen.style.display = "flex";
 }
 
-// === Player Logic ===
-function createPlayer() {}
-function resetPlayer() {
-  // Resets the player to be 20% of the canvas width from the left of the canvas and centred vertically
-  player.x = canvas.width / 5;
-  player.y = canvas.height / 2;
-  player.velocity = 0;
+function drawCountdownScreen() {
+  menuTitle.innerHTML = countdownValue;
+  menuStats.textContent = "GET READY...";
+  menuBtn.style.display = "none";
+  menuScreen.style.display = "flex";
 }
-function drawPlayer() {
-  // Safety check: if images aren't loaded yet, draw the fallback square
-  if (imagesLoaded < dragonSpriteFiles.length) {
-    player.width = canvas.width * 0.08;
-    player.height = player.width;
-    ctx.fillStyle = "yellow";
-    ctx.fillRect(player.x, player.y, player.width, player.height);
-    return;
-  }
-  ctx.save();
 
-  ctx.translate(player.x + player.width / 2, player.y + player.height / 2);
-  // Rotate based on velocity (tilt up when jumping, down when falling)
-  let tilt = player.velocity * 0.05;
-  tilt = Math.max(-0.5, Math.min(tilt, 0.5)); // Clamp the tilt so he doesn't do a backflip
-  ctx.rotate(tilt);
+async function startResumeCountdown() {
+  if (isCountingDown) return;
 
-  const currentImg = dragonSprites[player.animationSequence[player.frameIndex]];
-  ctx.drawImage(
-    currentImg,
-    -player.width / 2,
-    -player.height / 2,
-    player.width,
-    player.height,
-  );
+  isCountingDown = true;
+  countdownValue = 3;
 
-  ctx.restore();
-}
-function movePlayer(dt) {
-  // We multiply everything by dt to make sure the fall speed is consistent on any device
-  player.velocity += config.gravity * dt;
-  // Caps falling speed to 10 to prevent glitches
-  if (player.velocity > 10) player.velocity = 10;
-  player.y += player.velocity * dt; // Makes the player fall at the rate of gravity
-
-  // If the player hits the floor trigger collision
-  if (player.y + player.height > canvas.height) {
-    player.y = canvas.height - player.height;
-    // Triggers a collision
-    onCollision();
+  if (audioCtx && audioCtx.state === "suspended") {
+    audioCtx.resume();
   }
 
-  // If the player hits the top of the screen set the velocity to 0
-  // This prevents the player going off the screen
-  if (player.y < 0 - player.height / 2) {
-    player.y = 0 - player.height / 2;
-    player.velocity = 0;
-  }
-}
-function playerJump() {
-  player.velocity = config.jumpStrength;
-  playSfx(sfx.jump);
-}
+  drawCountdownScreen();
+  playSfx(sfxBuffers.point, 0.1);
 
-// === Obstacle Logic ===
-function createObstacles() {
-  // Creates the obstacle and pushes it on to the array 'obstacles'
+  menuTitle.classList.remove("countdown-active");
+  void menuTitle.offsetWidth;
+  menuTitle.classList.add("countdown-active");
 
-  let minHeight = 50;
-  let maxHeight = canvas.height - config.obstacleGap - 50;
-  // Sets the size of the top part of the obstacle
-  let topObstacleHeight =
-    Math.floor(Math.random() * (maxHeight - minHeight + 1)) + minHeight;
+  countdownTimer = setInterval(() => {
+    countdownValue--;
 
-  // Creates the obstacle object
-  let obstacle = {
-    x: canvas.width, // Starts at the right edge of canvas
-    width: 50, // Fixed width for obstacle
-    topHeight: topObstacleHeight, // Where the top part of the obstacle ends
-    bottomY: topObstacleHeight + config.obstacleGap, // Where the bottom part of the obstacle starts
-    passed: false, // Flag to track score
-  };
-  // Adds the obstacle to the array
-  obstacles.push(obstacle);
-}
-function spawnObstacles(deltaTime) {
-  // spawnTimer will essentially work like a stopwatch and count upwards
-  spawnTimer += deltaTime;
-
-  // If the spawnTimer reaches our spawn rate variable then we trigger createObstacles
-  if (spawnTimer >= config.obstacleSpawnRate) {
-    createObstacles();
-    spawnTimer = 0; // Resets the spawnTimer back to 0
-  }
-}
-function drawObstacles() {
-  ctx.save();
-  // Cyan glow for obstacles
-  ctx.strokeStyle = "#00f0ff";
-  ctx.lineWidth = 3;
-  ctx.shadowBlur = 15;
-  ctx.shadowColor = "#00f0ff";
-  ctx.fillStyle = "#00eeffc4"; // Semi-transparent body
-
-  // Loop through the array of 'obstacles' and draws them
-  obstacles.forEach((obs) => {
-    // Draw the top part of the obstacle
-    ctx.strokeRect(Math.floor(obs.x), 0, obs.width, obs.topHeight); // Introduced Math.floor to smooth out the edges
-    ctx.fillRect(Math.floor(obs.x), 0, obs.width, obs.topHeight);
-
-    // Draw the bottom part of the obstacle
-    ctx.strokeRect(obs.x, obs.bottomY, obs.width, canvas.height - obs.bottomY);
-    ctx.fillRect(obs.x, obs.bottomY, obs.width, canvas.height - obs.bottomY);
-  });
-  ctx.restore();
-}
-function moveObstacles(dt) {
-  // Loops through the array of 'obstacles' and updates the x positions
-  // We multiply everything by dt to make sure the speed is consistent on any device
-  obstacles.forEach((obs) => {
-    obs.x -= config.obstacleSpeed * dt;
-  });
-}
-function cleanupObstacles() {
-  // Removes obstacles when they have gone off the screen
-  obstacles = obstacles.filter((obs) => obs.x + obs.width > 0); // This filters out obstacles that have gone off the screen so we do not keep calculating them to follow good memory management
-}
-function resetObstacles() {
-  obstacles = []; // Clears the array
-}
-
-// === Game Logic ===
-function checkCollision() {
-  obstacles.forEach((obs) => {
-    // Changed the bounding box of the player to be slightly smaller than the sprite to make it feel slightly fairer if the sprite barely clips the obstacles
-    const hitPaddingX = player.width * 0.25;
-    const hitPaddingY = player.height * 0.25;
-
-    // Define the player's bounding box
-    const pLeft = player.x + hitPaddingX;
-    const pRight = player.x + player.width - hitPaddingX;
-    const pTop = player.y + hitPaddingY;
-    const pBottom = player.y + player.height - hitPaddingY;
-
-    // Define the Obstacle's left and right sides
-    const oLeft = obs.x;
-    const oRight = obs.x + obs.width;
-
-    // Check if the player is within the obstacle bounding box
-    if (pRight > oLeft && pLeft < oRight) {
-      // If the player touches the top part of the obstacle trigger collision
-      if (pTop < obs.topHeight) {
-        onCollision();
-      }
-
-      // If the player touches the bottom part of the obstacle trigger collision
-      if (pBottom > obs.bottomY) {
-        onCollision();
-      }
-    }
-
-    // If the player has passed through the gap change the passed flag to true and update score
-    if (!obs.passed && pLeft > oRight) {
-      updateScore();
-      obs.passed = true;
-    }
-  });
-}
-function onCollision() {
-  playSfx(sfx.death);
-  gameOver();
-}
-
-// === Score Logic ===
-function resetScore() {
-  score = 0;
-  liveScore.textContent = score;
-}
-function updateScore() {
-  score++;
-  liveScore.textContent = score;
-
-  playSfx(sfx.point);
-
-  if (score > highScore) {
-    updateHighScore();
-  }
-}
-function updateHighScore() {
-  highScore = score;
-  // Save to browser memory
-  localStorage.setItem("flappyDragonHighScore", highScore);
-}
-
-// Moved over to using a live-score element instead of the canvas
-// function drawScore() {
-//   ctx.save();
-
-//   ctx.fillStyle = "white";
-//   ctx.font = "bold 24px Verdana";
-//   ctx.textAlign = "center";
-
-//   // Shadow
-//   ctx.shadowColor = "black";
-//   ctx.shadowBlur = 2;
-//   ctx.shadowOffsetX = 2;
-//   ctx.shadowOffsetY = 2;
-
-//   // Draws the score at the top center of the canvas
-//   ctx.fillText(`${score}`, canvas.width / 2, canvas.height / 10);
-
-//   ctx.restore();
-// }
-
-// === World Logic ===
-function createWorld() {}
-function drawWorld() {}
-
-// === Input Manager ===
-function inputManager(e) {
-  // Prevents a mobile touch triggering as a mouse click
-  if (e.type === "touchstart") e.preventDefault();
-
-  // Gets the action from our dictionary (e.g., "Jump" or "Pause")
-  const actionName = controls[e.code];
-
-  // Handle Keyboard events
-  if (e.type === "keydown" && actionName) {
-    const action = controlsAction[actionName];
-
-    // Only trigger if not held down (locked)
-    if (!e.repeat && !action.locked) {
-      action.locked = true;
-      inputHandler(actionName);
-    }
-  }
-
-  // When a keyup event happens we unlock the action
-  if (e.type === "keyup" && actionName) {
-    controlsAction[actionName].locked = false;
-  }
-
-  // Handle Mouse and Touch events (Defaults to "Jump")
-  if (e.type === "mousedown" || e.type === "touchstart") {
-    if (!gameRunning || paused) {
-      inputHandler("Jump");
-    } else if (menuScreen.style.display !== "flex") {
-      inputHandler("Jump");
-    }
-  }
-}
-
-// === Input Handler ===
-function inputHandler(action) {
-  if (action === "Jump") {
-    if (!gameRunning) {
-      gameReset();
-      // bgMusic.play();
-    } else if (paused) {
-      paused = false;
-      // bgMusic.play();
-      menuScreen.style.display = "none";
+    if (countdownValue > 0) {
+      drawCountdownScreen();
+      playSfx(sfxBuffers.point, 0.1);
+      menuTitle.classList.remove("countdown-active");
+      void menuTitle.offsetWidth;
+      menuTitle.classList.add("countdown-active");
     } else {
-      jumpRequested = true; // Using the flag instead of just calling the jump function straight way makes sure that we only trigger the jump at the start of the next frame update which should prevent any glitches and stuttering
-      // playerJump();
+      clearInterval(countdownTimer);
+      isCountingDown = false;
+      paused = false;
+      menuScreen.style.display = "none";
+      menuTitle.classList.remove("countdown-active");
     }
-  }
-
-  if (action === "Pause") {
-    // console.log("Game Paused!");
-    if (gameRunning) {
-      paused = !paused;
-      if (paused) {
-        drawPauseScreen();
-        // bgMusic.pause();
-      } else {
-        // bgMusic.play();
-        menuScreen.style.display = "none";
-      }
-    }
-  }
+  }, 1000);
 }
 
-function playSfx(sound) {
-  // Restarts the sound effect from the beginning if it is already playing
-  sound.currentTime = 0;
-  sound.play();
+function drawWorld() {
+  // Future plans to implement a parallax moving background
 }
+//#endregion
+
+window.onload = init; // Runs the initialisation on page load
