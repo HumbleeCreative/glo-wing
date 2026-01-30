@@ -26,7 +26,7 @@ canvas {
   will-change: transform;
   -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
-  image-rendering: crisp-edges; /* Keeps the dragon sprite sharp */
+  image-rendering: auto; /* Keeps the dragon sprite sharp */
 
   /* Disables double tap to zoom, pinch to zoom etc. on mobile */
   touch-action: none;
@@ -141,6 +141,7 @@ body {
   align-items: center;
   justify-content: center;
   transition: all 0.3s ease;
+  box-shadow: 0 0 10px var(--secondary);
 }
 
 #pause-btn:hover {

@@ -17,21 +17,34 @@ const dbgFps = document.getElementById("debug-fps");
 const dbgY = document.getElementById("debug-y");
 const dbgDpr = document.getElementById("debug-dpr");
 const dbgRes = document.getElementById("debug-res");
+const dbgDragonSize = document.getElementById("debug-dragon-size");
+const dbgObstacleSize = document.getElementById("debug-obstacle-size");
 
 //#endregion
 
 //* === Configuration ===
 //#region Configuration
 const config = {
-  gravity: 0.35,
-  jumpStrength: -7.5,
-  obstacleSpeed: 3,
-  obstacleGap: 150,
-  obstacleSpawnRate: 2000,
+  // Ratios derived from tested resolution (530x946) to ensure consistent difficulty
+  gravityRatio: 0.00037, // Percentage of screen height to fall per frame
+  jumpRatio: -0.00793, // Percentage of screen height to jump
+  speedRatio: 0.00566, // Percentage of screen width pipes move
+  gapRatio: 1.75, // Gap size relative to dragon height
+  widthRatio: 0.5, // Pipe width relative to dragon width
+
+  // Placeholder values - These are populated dynamically in resizeCanvas()
+  gravity: 0,
+  jumpStrength: 0,
+  obstacleSpeed: 0,
+  obstacleGap: 0,
+  obstacleWidth: 0,
+
+  // Core Game Settings
+  obstacleSpawnRate: 3000,
   terminalVelocity: 10,
-  playerScale: 0.16, // Player height relative to the canvas width
-  aspectRatio: 166 / 129, // Dragon sprite ratio
-  hitPadding: 0.25, // This is used to shrink the collision hitbox to make the game feel fairer
+  playerScale: 0.2, // Scale the player to Percentage of canvas width
+  aspectRatio: 166 / 129, // Sprite dimensions (Width / Height)
+  hitPadding: 0.25, // Percentage to shrink hitbox to make the game feel fairer
 };
 
 const controls = {
@@ -63,7 +76,6 @@ let spawnTimer = 0; // Timer for spawning obstacles
 let lastUpdateTime = 0; // Store the last time we updated the frame
 let countdownValue = 3;
 let countdownTimer = null;
-
 let backgroundStars = [];
 //#endregion
 
@@ -93,8 +105,8 @@ const dragonSpriteFiles = [
 //#region Objects
 
 let player = {
-  x: -50, // Creates player off screen
-  y: -50,
+  x: -2000, // Creates player off screen
+  y: -2000,
   width: 0,
   height: 0,
   velocity: 0,
@@ -122,7 +134,7 @@ async function init() {
   ctx = canvas.getContext("2d");
 
   // Initial sizing
-  resizeCanvas();
+  resizeCanvas(); // Sets the initial resolution based variables
 
   // Listen for window resizes (desktop) or orientation changes (mobile)
   window.addEventListener("resize", resizeCanvas);
@@ -143,7 +155,7 @@ async function init() {
       e.preventDefault();
       e.stopPropagation(); // e.stopPropagation stops the button clicks triggering the canvas click event
 
-      if (!audioCtx) await initAudio();
+      if (!audioCtx) await initAudio(); // If there is no audioCtx then initial audio
 
       if (!gameRunning) {
         gameReset();
@@ -153,12 +165,10 @@ async function init() {
     });
   }
 
-  // Initialise Background
   initBackground();
-
   await loadAssets();
 
-  // Set the initial Start Screen
+  // Set the initial Start Screen - slight delay for the splash screen
   setTimeout(() => {
     drawStartScreen();
   }, 2000);
@@ -192,7 +202,7 @@ function gameLoop(timestamp) {
 }
 
 function update(dt, deltaTime) {
-  // Update particles regardless of gameRunning state
+  // Update particles regardless of game state
   particles.forEach((p, index) => {
     p.update(dt);
     if (p.alpha <= 0) particles.splice(index, 1);
@@ -226,9 +236,9 @@ function update(dt, deltaTime) {
 }
 
 function draw() {
-  // Clear the whole canvas including DPR scaling
+  // Clear the whole canvas
   ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.setTransform(1, 0, 0, 1, 0, 0); // Resets the scaling
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
 
@@ -244,7 +254,7 @@ function draw() {
 //* === Input Management ===
 //#region Input Management
 
-// REMOVED 'async' to make the jump trigger instant
+//! Removed 'async' to make the jump trigger instant
 function inputManager(e) {
   if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
 
@@ -254,8 +264,8 @@ function inputManager(e) {
   // Gets the action from our dictionary (e.g., "Jump" or "Pause")
   const actionName = controls[e.code];
 
+  // Keyboard Logic
   if (actionName && controlsAction[actionName]) {
-    // Handle Keyboard events
     // Only trigger if not held down (locked)
     if (
       e.type === "keydown" &&
@@ -271,7 +281,6 @@ function inputManager(e) {
 
   // Handle Mouse and Touch events (Defaults to "Jump")
   if (e.type === "mousedown" || e.type === "touchstart") {
-    // Check our boolean flag instead of the DOM
     if (gameRunning && !paused && !isMenuVisible) {
       jumpRequested = true;
     } else {
@@ -327,11 +336,6 @@ function movePlayer(dt) {
 
   player.y += player.velocity * dt; // Makes the player fall at the rate of gravity
 
-  if (player.y + player.height > canvas.clientHeight) {
-    player.y = canvas.clientHeight - player.height;
-    onCollision();
-  }
-
   // If the player hits the top of the screen set the velocity to 0
   // This prevents the player going off the screen
   if (player.y < 0 - player.height / 2) {
@@ -348,14 +352,11 @@ function playerJump() {
 }
 
 function drawPlayer() {
-  // If the game isn't running and it's not the first load,
-  // hide the player (because they just exploded!)
+  // Hides the player if they are dead
   if (!gameRunning && !isMenuVisible) return;
 
   // Safety check: if images aren't loaded yet, draw the fallback square
   if (imagesLoaded < dragonSpriteFiles.length) {
-    player.width = canvas.clientWidth * 0.08;
-    player.height = player.width;
     ctx.fillStyle = "yellow";
     ctx.fillRect(player.x, player.y, player.width, player.height);
     return;
@@ -386,6 +387,7 @@ function drawPlayer() {
 // Creates the obstacle and pushes it on to the array 'obstacles'
 function createObstacles() {
   const minHeight = 50;
+  // Calculates vertical bounds using the relative gap set in resizeCanvas
   const maxHeight = canvas.clientHeight - config.obstacleGap - 50;
 
   // Sets the size of the top part of the obstacle
@@ -395,7 +397,7 @@ function createObstacles() {
   // Creates the obstacle object
   let obstacle = {
     x: canvas.clientWidth, // Starts at the right edge of canvas
-    width: 50, // Fixed width for obstacle
+    width: config.obstacleWidth, // Uses the relative width set in resizeCanvas
     topHeight: topObstacleHeight, // Where the top part of the obstacle ends
     bottomY: topObstacleHeight + config.obstacleGap, // Where the bottom part of the obstacle starts
     passed: false, // Flag to track score
@@ -443,7 +445,7 @@ function drawObstacles() {
   obstacles.forEach((obs) => {
     const drawX = Math.floor(obs.x);
     // Draw the top part of the obstacle
-    ctx.strokeRect(drawX, 0, obs.width, obs.topHeight); // Introduced Math.floor to smooth out the edges
+    ctx.strokeRect(drawX, 0, obs.width, obs.topHeight);
     ctx.fillRect(drawX, 0, obs.width, obs.topHeight);
     // Draw the bottom part of the obstacle
     ctx.strokeRect(
@@ -476,13 +478,21 @@ function checkCollision() {
   const pTop = player.y + hitPaddingY;
   const pBottom = player.y + player.height - hitPaddingY;
 
+  // Floor Collision Check
+  if (pBottom > canvas.clientHeight) {
+    onCollision();
+    return; // Exit early since the player is dead
+  }
+
+  // Obstacle Collision Check
   obstacles.forEach((obs) => {
     // Define the Obstacle's left and right sides
     const oLeft = obs.x;
     const oRight = obs.x + obs.width;
 
-    // If the player has passed through the gap change the passed flag to true and update score
+    // Score Trigger
     if (oRight < pLeft) {
+      // If the player has passed through the an obstacle and we have not updated the score yet. Update score and flag to true
       if (!obs.passed) {
         updateScore();
         obs.passed = true;
@@ -490,7 +500,7 @@ function checkCollision() {
       return;
     }
 
-    // Check if the player is within the obstacle bounding box
+    // Check if the player is within the obstacle hitbox
     if (pRight > oLeft && pLeft < oRight) {
       // If the player touches the top or bottom parts of the obstacle trigger collision
       if (pTop < obs.topHeight || pBottom > obs.bottomY) {
@@ -504,9 +514,10 @@ function onCollision() {
   if (!gameRunning) return; // Prevent multiple triggers
 
   isGameOverSequence = true; // Lock inputs
+
   if (sfxBuffers.death) playSfx(sfxBuffers.death, 0.2);
 
-  // Trigger particle burst at player location
+  // Trigger particle explosion at player location
   createExplosion(
     player.x + player.width / 2,
     player.y + player.height / 2,
@@ -522,7 +533,6 @@ function onCollision() {
 
   // Wait 1 second to allow for particle explosion
   setTimeout(() => {
-    // We keep isGameOverSequence true until they click "Try Again"
     drawGameOverScreen();
   }, 1000);
 }
@@ -555,7 +565,7 @@ async function initAudio() {
   // Create the main audio context (supports older webkit browsers)
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-  // Create a Master Gain node to act as a global volume slider
+  // Create a Master Gain node to act as a global volume
   masterGain = audioCtx.createGain();
   masterGain.connect(audioCtx.destination);
   masterGain.gain.value = 0.5;
@@ -594,7 +604,8 @@ function playSfx(buffer, volume = 1.0) {
   source.buffer = buffer; // Assigns the sound data
   gainNode.gain.value = volume; // Set the specific volume level
 
-  // Source -> Volume Control -> Master Volume -> Plays the sounds
+  // This is the how we get to the sound playing
+  // Source -> Volume Control (gainNode) -> Master Volume (masterGain) -> Plays the sounds
   source.connect(gainNode);
   gainNode.connect(masterGain);
 
@@ -603,7 +614,7 @@ function playSfx(buffer, volume = 1.0) {
 
 //* Handles the Background Music loop
 function playBGM() {
-  if (!bgmBuffer || !audioCtx) return;
+  if (!bgmBuffer || !audioCtx) return; // If there is no background music or audio context exit early
 
   stopBGM(); // Prevents multiple tracks from playing at once
 
@@ -631,7 +642,8 @@ function stopBGM() {
 //* === UI & Visuals ===
 //#region UI & Visuals
 function resizeCanvas() {
-  // Sets the canvas resolution to the actual canvas size as defined in the CSS
+  // Syncs the internal drawing resolution with the CSS display size,
+  // scaled by the device pixel ratio to ensure sharpness on High DPI screens.
   const dpr = window.devicePixelRatio || 1;
   canvas.width = canvas.clientWidth * dpr;
   canvas.height = canvas.clientHeight * dpr;
@@ -641,10 +653,19 @@ function resizeCanvas() {
 
   // Updates player size on resize event
   if (player) {
-    player.height = canvas.clientWidth * config.playerScale;
-    // Maintain the aspect ratio of the sprite
-    player.width = player.height * config.aspectRatio;
+    // Calculate Player Dimensions
+    player.width = canvas.clientWidth * config.playerScale; // Calculate Width based on screen width
+    player.height = player.width / config.aspectRatio; // Calculate Height relative to the width to preserve the sprite shape
   }
+
+  // Calculate Physics relative to the screen width/height
+  config.gravity = canvas.clientHeight * config.gravityRatio;
+  config.jumpStrength = canvas.clientHeight * config.jumpRatio;
+  config.obstacleSpeed = canvas.clientWidth * config.speedRatio;
+
+  // Calculate Obstacles relative to the player's size
+  config.obstacleGap = player.height * config.gapRatio;
+  config.obstacleWidth = player.width * config.widthRatio;
 }
 
 async function loadAssets() {
@@ -680,7 +701,7 @@ const loadImage = (src) => {
 
 function gameReset() {
   isGameOverSequence = false; // Unlock inputs
-  isMenuVisible = false;
+  isMenuVisible = false; // Resets the flag
   resetPlayer();
   obstacles = []; // Resets the obstacles array
   particles = []; // Resets death particles
@@ -694,11 +715,6 @@ function gameReset() {
 
   uiLayer.style.display = "flex";
   menuScreen.style.display = "none";
-}
-
-function gameOver() {
-  gameRunning = false;
-  drawGameOverScreen();
 }
 
 function drawLoadingScreen() {
@@ -778,24 +794,30 @@ async function startResumeCountdown() {
 }
 
 //* === Background ===
+// Initialised 50 start objects with random positions, sizes and speeds
 function initBackground() {
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 100; i++) {
+    const layer = Math.floor(Math.random() * 3); // 0 = Far (slow), 1 = Mid, 2 = Near (fast)
     backgroundStars.push({
       x: Math.random() * canvas.clientWidth,
       y: Math.random() * canvas.clientHeight,
-      size: Math.random() * 2,
-      speed: Math.random() * 0.5 + 0.2,
+      size: (layer + 1) * 0.9, // Near stars are bigger
+      speed: (layer + 1) * 0.3, // Near stars move faster
+      opacity: (layer + 1) * 0.2, // Near stars are brighter
     });
   }
 }
 
+// Draws the stars and handles their horizontal movement
 function drawWorld() {
-  ctx.fillStyle = "#ffee00b2";
   backgroundStars.forEach((star) => {
+    ctx.fillStyle = `rgb(255, 238, 0, ${star.opacity})`;
     ctx.fillRect(star.x, star.y, star.size, star.size);
+
+    // Updates their position only when the game is running
     if (gameRunning && !paused) {
-      star.x -= star.speed; // Move stars left
-      if (star.x < 0) star.x = canvas.clientWidth; // Wrap around
+      star.x -= star.speed; // Move stars left based on it's layer speed
+      if (star.x < 0) star.x = canvas.clientWidth; // When the star goes off the screen loops it back round to the right of the screen
     }
   });
 }
@@ -814,27 +836,30 @@ class Particle {
     this.speedX = (Math.random() - 0.5) * 4;
     this.speedY = (Math.random() - 0.5) * 4;
     this.color = color;
-    this.alpha = 1; // For fading out
-    this.decay = Math.random() * 0.02 + 0.015; // How fast it disappears
+    this.alpha = 1; // Initial opacity
+    this.decay = Math.random() * 0.02 + 0.015; // How fast it fades out
   }
 
+  // Moves the particles based on the delta time and reduces the opacity
   update(dt) {
     this.x += this.speedX * dt;
     this.y += this.speedY * dt;
-    this.alpha -= this.decay * dt;
+    this.alpha -= this.decay * dt; // Fades out over time
   }
 
+  // Draws the particles with a glow effect using shadows
   draw() {
     ctx.save();
     ctx.globalAlpha = this.alpha;
     ctx.fillStyle = this.color;
-    ctx.shadowBlur = 10;
+    ctx.shadowBlur = 10; // Creates the neon glow effect
     ctx.shadowColor = this.color;
     ctx.fillRect(this.x, this.y, this.size, this.size);
     ctx.restore();
   }
 }
 
+// Creates a cluster of particles at a specific location
 function createExplosion(x, y, color) {
   for (let i = 0; i < 15; i++) {
     particles.push(new Particle(x, y, color));
@@ -846,15 +871,19 @@ function createExplosion(x, y, color) {
 //#region Debug Logic
 
 function updateDebug(dt) {
+  // If debug is set to tru then display the debug screen and update the values
   if (debug) {
     debugOverlay.style.display = "block";
     dbgFps.textContent = Math.round(60 / dt);
     dbgY.textContent = Math.round(player.y);
     dbgDpr.textContent = window.devicePixelRatio;
     dbgRes.textContent = `${canvas.clientWidth} / ${canvas.clientHeight}`;
+    dbgDragonSize.textContent = `${player.width.toFixed(2)} / ${player.height.toFixed(2)}`;
+    dbgObstacleSize.textContent = `${Math.round(config.obstacleWidth)} / ${Math.round(config.obstacleGap)}`;
   }
 }
 
+// Draws Hitboxes to help with debugging
 function drawDebugHitboxes() {
   if (!debug) return;
 
