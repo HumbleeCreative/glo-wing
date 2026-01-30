@@ -10,6 +10,14 @@ const uiLayer = document.getElementById("ui-layer");
 const liveScore = document.getElementById("live-score");
 const pauseBtn = document.getElementById("pause-btn");
 const canvas = document.getElementById("game");
+
+// Debug DOM Elements
+const debugOverlay = document.getElementById("debug-overlay");
+const dbgFps = document.getElementById("debug-fps");
+const dbgY = document.getElementById("debug-y");
+const dbgDpr = document.getElementById("debug-dpr");
+const dbgRes = document.getElementById("debug-res");
+
 //#endregion
 
 //* === Configuration ===
@@ -23,7 +31,7 @@ const config = {
   terminalVelocity: 10,
   playerScale: 0.16, // Player height relative to the canvas width
   aspectRatio: 166 / 129, // Dragon sprite ratio
-  hitPadding: 0.3, // This is used to shrink the collision hitbox to make the game feel fairer
+  hitPadding: 0.25, // This is used to shrink the collision hitbox to make the game feel fairer
 };
 
 const controls = {
@@ -38,12 +46,15 @@ const controls = {
 //#region Global Variables
 let ctx, audioCtx, masterGain;
 
+let debug = false;
+
 let firstGame = true; // Flag to track if this is the first game in the session
 let gameRunning = false; // Flag to track the game state
 let paused = false; // Flag to track paused game state
 let isCountingDown = false; // Flag to track if we are counting down after a pause
 let jumpRequested = false; // Flag to track if we should trigger a jump
 let isMenuVisible = true; // NEW: Boolean flag to replace expensive CSS checks
+let isGameOverSequence = false; // Flag to block input during death/reset
 
 let score = 0;
 let highScore = 0;
@@ -225,6 +236,8 @@ function draw() {
   drawObstacles(); // Draws on top of the World
   drawPlayer(); // Draws on top of the Obstacles
   particles.forEach((p) => p.draw()); // Draw particles on top of player to create explosion effect
+
+  if (debug) drawDebugHitboxes();
 }
 //#endregion
 
@@ -269,6 +282,8 @@ function inputManager(e) {
 
 async function inputHandler(action) {
   if (action === "Jump") {
+    if (isGameOverSequence) return; // If we are in the middle of a death animation return immediately
+
     if (!gameRunning) {
       if (audioCtx && audioCtx.state === "suspended") await audioCtx.resume();
       gameReset();
@@ -452,8 +467,8 @@ function drawObstacles() {
 //#region Collision & Scoring
 function checkCollision() {
   // Changed the bounding box of the player to be slightly smaller than the sprite to make it feel slightly fairer if the sprite barely clips the obstacles
-  const hitPaddingX = player.width * config.hitPadding * 1.25;
-  const hitPaddingY = player.height * config.hitPadding;
+  const hitPaddingX = player.width * config.hitPadding;
+  const hitPaddingY = player.height * config.hitPadding * 1.25;
 
   // Define the player's bounding box
   const pLeft = player.x + hitPaddingX;
@@ -488,6 +503,7 @@ function checkCollision() {
 function onCollision() {
   if (!gameRunning) return; // Prevent multiple triggers
 
+  isGameOverSequence = true; // Lock inputs
   if (sfxBuffers.death) playSfx(sfxBuffers.death, 0.2);
 
   // Trigger particle burst at player location
@@ -506,6 +522,7 @@ function onCollision() {
 
   // Wait 1 second to allow for particle explosion
   setTimeout(() => {
+    // We keep isGameOverSequence true until they click "Try Again"
     drawGameOverScreen();
   }, 1000);
 }
@@ -662,6 +679,7 @@ const loadImage = (src) => {
 };
 
 function gameReset() {
+  isGameOverSequence = false; // Unlock inputs
   isMenuVisible = false;
   resetPlayer();
   obstacles = []; // Resets the obstacles array
@@ -828,9 +846,48 @@ function createExplosion(x, y, color) {
 //#region Debug Logic
 
 function updateDebug(dt) {
-  document.getElementById("debug-fps").textContent = Math.round(60 / dt);
-  document.getElementById("debug-y").textContent = Math.round(player.y);
-  document.getElementById("debug-dpr").textContent = window.devicePixelRatio;
+  if (debug) {
+    debugOverlay.style.display = "block";
+    dbgFps.textContent = Math.round(60 / dt);
+    dbgY.textContent = Math.round(player.y);
+    dbgDpr.textContent = window.devicePixelRatio;
+    dbgRes.textContent = `${canvas.clientWidth} / ${canvas.clientHeight}`;
+  }
+}
+
+function drawDebugHitboxes() {
+  if (!debug) return;
+
+  ctx.save();
+  ctx.lineWidth = 2;
+
+  // Draw Player Hitbox (Yellow)
+  const hitPaddingX = player.width * config.hitPadding;
+  const hitPaddingY = player.height * config.hitPadding * 1.25;
+
+  ctx.strokeStyle = "yellow";
+  ctx.strokeRect(
+    player.x + hitPaddingX,
+    player.y + hitPaddingY,
+    player.width - hitPaddingX * 2,
+    player.height - hitPaddingY * 2,
+  );
+
+  // Draw Obstacle Hitbox (Red)
+  ctx.strokeStyle = "red";
+  obstacles.forEach((obs) => {
+    // Top obstacle
+    ctx.strokeRect(obs.x, 0, obs.width, obs.topHeight);
+    // Bottom obstacle
+    ctx.strokeRect(
+      obs.x,
+      obs.bottomY,
+      obs.width,
+      canvas.clientHeight - obs.bottomY,
+    );
+  });
+
+  ctx.restore();
 }
 //#endregion
 
